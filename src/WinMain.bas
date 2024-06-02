@@ -2,16 +2,232 @@
 #include once "win\commctrl.bi"
 #include once "Resources.RH"
 
+Const PIPE_NAME_R = __TEXT("\\.\pipe\Async-ReaderR")
+Const PIPE_NAME_W = __TEXT("\\.\pipe\Async-ReaderW")
+Const PROCESS_NAME = __TEXT("C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe")
+Const PROCESS_COMMAND_LINE = __TEXT("""C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe"" ""-showincludes"" ""D:\QuickTestBasicProgram\file.bas""")
+
+Const READ_BUFFER_CAPACITY = 512
+
 Type InputDialogParam
 	hInst As HINSTANCE
 	hWin As HWND
+	OverlapRead As OVERLAPPED
+	OverlapWrite As OVERLAPPED
+	hReadPipe As HANDLE
+	hWritePipe As HANDLE
+
+	hClientWritePipe As HANDLE
+	hClientReadPipe As HANDLE
+
+	hClientWriteFile As HANDLE
+	hClientErrorFile As HANDLE
+	hClientReadFile As HANDLE
+
+	ReadBuffer(READ_BUFFER_CAPACITY - 1) As UByte
+	WriteBuffer(READ_BUFFER_CAPACITY - 1) As UByte
 End Type
+
+Private Sub ReadCompletionRoutine( _
+		ByVal dwErrorCode As DWORD, _
+		ByVal dwNumberOfBytesTransfered As DWORD, _
+		ByVal lpOverlapped As OVERLAPPED Ptr _
+	)
+
+	If dwErrorCode Then
+		' error
+		Exit Sub
+	End If
+
+	If dwNumberOfBytesTransfered = 0 Then
+		' end of the stream
+		Exit Sub
+	End If
+
+	Dim this As InputDialogParam Ptr = CONTAINING_RECORD(lpOverlapped, InputDialogParam, OverlapRead)
+
+	ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
+	Dim resRead As BOOL = ReadFileEx( _
+		this->hReadPipe, _
+		@this->ReadBuffer(0), _
+		READ_BUFFER_CAPACITY, _
+		@this->OverlapRead, _
+		@ReadCompletionRoutine _
+	)
+	If resRead = 0 Then
+		' error
+	End If
+
+End Sub
+
+Private Sub WriteCompletionRoutine( _
+		ByVal dwErrorCode As DWORD, _
+		ByVal dwNumberOfBytesTransfered As DWORD, _
+		ByVal lpOverlapped As OVERLAPPED Ptr _
+	)
+
+End Sub
 
 Private Sub IDOK_OnClick( _
 		ByVal this As InputDialogParam Ptr, _
 		ByVal hWin As HWND _
 	)
 
+	Scope
+		this->hReadPipe = CreateNamedPipe( _
+			@PIPE_NAME_R, _
+			PIPE_ACCESS_DUPLEX Or FILE_FLAG_OVERLAPPED, _
+			PIPE_TYPE_BYTE Or PIPE_READMODE_BYTE, _
+			PIPE_UNLIMITED_INSTANCES, _
+			0, 0, 0, _
+			NULL _
+		)
+		If this->hReadPipe = INVALID_HANDLE_VALUE Then
+			' error
+			Exit Sub
+		End If
+
+		this->hWritePipe = CreateNamedPipe( _
+			@PIPE_NAME_W, _
+			PIPE_ACCESS_DUPLEX Or FILE_FLAG_OVERLAPPED, _
+			PIPE_TYPE_BYTE Or PIPE_READMODE_BYTE, _
+			PIPE_UNLIMITED_INSTANCES, _
+			0, 0, 0, _
+			NULL _
+		)
+		If this->hWritePipe = INVALID_HANDLE_VALUE Then
+			' error
+			Exit Sub
+		End If
+	End Scope
+
+	Scope
+		' you need this for the client to inherit the handles
+		Dim saAttr As SECURITY_ATTRIBUTES = Any
+		With saAttr
+			.nLength = SizeOf(SECURITY_ATTRIBUTES)
+			.lpSecurityDescriptor = NULL
+			.bInheritHandle = TRUE
+		End With
+
+		this->hClientWritePipe = CreateFile( _
+			@PIPE_NAME_R, _
+			GENERIC_WRITE, _
+			0, _
+			@saAttr, _
+			OPEN_EXISTING, _
+			0, _
+			NULL _
+		)
+
+		this->hClientReadPipe = CreateFile( _
+			@PIPE_NAME_W, _
+			GENERIC_READ, _
+			0, _
+			@saAttr, _
+			OPEN_EXISTING, _
+			0, _
+			NULL _
+		)
+	End Scope
+
+	Scope
+		Dim hCurrentProcess As HANDLE = GetCurrentProcess()
+
+		Dim resDuplRead As BOOL = DuplicateHandle( _
+			hCurrentProcess, _
+			this->hClientReadPipe, _
+			hCurrentProcess, _
+			@this->hClientReadFile, _
+			0, _
+			TRUE, _
+			DUPLICATE_SAME_ACCESS _
+		)
+		If resDuplRead = 0 Then
+			' error
+		End If
+
+		Dim resDuplWrite As BOOL = DuplicateHandle( _
+			hCurrentProcess, _
+			this->hClientWritePipe, _
+			hCurrentProcess, _
+			@this->hClientWriteFile, _
+			0, _
+			TRUE, _
+			DUPLICATE_SAME_ACCESS _
+		)
+		If resDuplWrite = 0 Then
+			' error
+		End If
+
+		Dim resDuplError As BOOL = DuplicateHandle( _
+			hCurrentProcess, _
+			this->hClientWritePipe, _
+			hCurrentProcess, _
+			@this->hClientErrorFile, _
+			0, _
+			TRUE, _
+			DUPLICATE_SAME_ACCESS _
+		)
+		If resDuplError = 0 Then
+			' error
+		End If
+	End Scope
+
+	Scope
+		' you need this for the client to inherit the handles
+		Dim saAttr As SECURITY_ATTRIBUTES = Any
+		With saAttr
+			.nLength = SizeOf(SECURITY_ATTRIBUTES)
+			.lpSecurityDescriptor = NULL
+			.bInheritHandle = TRUE
+		End With
+
+		Dim siStartInfo As STARTUPINFO = Any
+		ZeroMemory(@siStartInfo, SizeOf(STARTUPINFO))
+		With siStartInfo
+			.cb = SizeOf(STARTUPINFO)
+			.hStdInput = this->hClientReadFile
+			.hStdOutput = this->hClientWriteFile
+			.hStdError = this->hClientWriteFile
+			.dwFlags = STARTF_USESTDHANDLES
+		End With
+
+		Dim piProcInfo As PROCESS_INFORMATION = Any
+
+		Dim lpCommandLine As TCHAR Ptr = Allocate((Len(PROCESS_COMMAND_LINE) + 1) * SizeOf(TCHAR))
+		lstrcpy(lpCommandLine, @PROCESS_COMMAND_LINE)
+
+		Dim resCreateProcess As BOOL = CreateProcess( _
+			@PROCESS_NAME, _
+			lpCommandLine, _
+			NULL, _
+			NULL, _
+			True, _
+			CREATE_UNICODE_ENVIRONMENT, _
+			NULL, _
+			NULL, _
+			@siStartInfo, _
+			@piProcInfo _
+		)
+
+		If resCreateProcess = 0 Then
+			' error
+		End If
+
+		ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
+		Dim resRead As BOOL = ReadFileEx( _
+			this->hReadPipe, _
+			@this->ReadBuffer(0), _
+			READ_BUFFER_CAPACITY, _
+			@this->OverlapRead, _
+			@ReadCompletionRoutine _
+		)
+		If resRead = 0 Then
+			' error
+		End If
+
+	End Scope
 
 End Sub
 
@@ -49,6 +265,7 @@ Private Function InputDataDialogProc( _
 
 	If uMsg = WM_INITDIALOG Then
 		pContext = Cast(InputDialogParam Ptr, lParam)
+		pContext->hWin = hWin
 		SetWindowLongPtr(hWin, GWLP_USERDATA, Cast(LONG_PTR, pContext))
 		DialogMain_OnLoad(pContext, hWin)
 		Return TRUE
@@ -132,15 +349,14 @@ Private Function CreateMainWindow( _
 End Function
 
 Private Function MessageLoop( _
-		ByVal hWin As HWND, _
-		ByVal hEvent As HANDLE _
+		ByVal hWin As HWND _
 	)As Integer
 
 	Do
-		Const EventVectorLength = 1
+		Const EventVectorLength = 0
 		Dim dwWaitResult As DWORD = MsgWaitForMultipleObjectsEx( _
 			EventVectorLength, _
-			@hEvent, _
+			NULL, _
 			INFINITE, _
 			QS_ALLEVENTS Or QS_ALLINPUT Or QS_ALLPOSTMESSAGE, _
 			MWMO_INPUTAVAILABLE Or MWMO_ALERTABLE _
@@ -148,11 +364,7 @@ Private Function MessageLoop( _
 
 		Select Case dwWaitResult
 
-			Case WAIT_OBJECT_0
-				' The event became a signal, exit from loop
-				Return 0
-
-			Case WAIT_OBJECT_0 + 1
+			Case WAIT_OBJECT_0, WAIT_OBJECT_0 + 1
 				' Messages have been added to the message queue
 				' they need to be processed
 
@@ -215,32 +427,17 @@ Private Function tWinMain( _
 	param.hInst = hInst
 
 	Scope
-		Dim hEvent As HANDLE = CreateEvent( _
-			NULL, _
-			TRUE, _
-			FALSE, _
-			NULL _
-		)
-		If hEvent = NULL Then
-			Return 1
-		End If
-
 		Dim hWin As HWND = CreateMainWindow( _
 			hInst, _
 			@param _
 		)
 		If hWin = NULL Then
-			CloseHandle(hEvent)
 			Return 1
 		End If
 
-		Dim resMessageLoop As Integer = MessageLoop( _
-			hWin, _
-			hEvent _
-		)
+		Dim resMessageLoop As Integer = MessageLoop(hWin)
 
 		DestroyWindow(hWin)
-		CloseHandle(hEvent)
 
 		Return resMessageLoop
 	End Scope
