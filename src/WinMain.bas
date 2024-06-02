@@ -101,7 +101,7 @@ Private Sub ChildProcess_OnRead( _
 	Scope
 		Const NewLine = !"\r\n"
 
-		Dim buf As WString * (READ_BUFFER_CAPACITY + 1) = Any
+		Dim buf As WString * (READ_BUFFER_CAPACITY + Len(NewLine) + 1) = Any
 		Dim Length As Long = MultiByteToWideChar( _
 			CP_ACP, _
 			0, _
@@ -110,9 +110,8 @@ Private Sub ChildProcess_OnRead( _
 			@buf, _
 			READ_BUFFER_CAPACITY _
 		)
-		buf[Length] = 0
 
-		lstrcatW(@buf, @WStr(NewLine))
+		lstrcpyW(@buf[Length], @WStr(NewLine))
 
 		Dim hwndControl As HWND = GetDlgItem(this->hWin, IDC_EDT_OUTPUT)
 		AppendLengthTextW(hwndControl, @buf, Length + Len(NewLine))
@@ -380,7 +379,7 @@ Private Sub IDC_BTN_INPUT_OnClick( _
 		ByVal hWin As HWND _
 	)
 
-	Const NewLine = Str(!"\r\n")
+	Const NewLine = !"\r\n"
 
 	Dim bufLength As Long = GetDlgItemTextA( _
 		hWin, _
@@ -389,9 +388,9 @@ Private Sub IDC_BTN_INPUT_OnClick( _
 		WRITE_BUFFER_CAPACITY - Len(NewLine) - 1 _
 	)
 
-	lstrcpyA(@this->WriteBuffer(bufLength), @NewLine)
+	lstrcpyA(@this->WriteBuffer(bufLength), @Str(NewLine))
 
-	' Start reading child process
+	' Start writing to child process
 	ZeroMemory(@this->OverlapWrite, SizeOf(OVERLAPPED))
 	Dim resWrite As BOOL = WriteFileEx( _
 		this->Pipes.hServerWritePipe, _
