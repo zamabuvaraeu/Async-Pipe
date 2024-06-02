@@ -1,5 +1,6 @@
 #include once "WinMain.bi"
 #include once "win\commctrl.bi"
+#include once "win\windowsx.bi"
 #include once "Resources.RH"
 
 Const PIPE_NAME_R = __TEXT("\\.\pipe\Async-ReaderR")
@@ -65,6 +66,20 @@ Private Sub ClosePipeHandles( _
 
 End Sub
 
+Private Sub AppendLengthTextW( _
+		ByVal hwndControl As HWND, _
+		ByVal lpwszText As LPWSTR, _
+		ByVal Length As Integer _
+	)
+
+	Dim OldTextLength As Long = GetWindowTextLengthW(hwndControl)
+
+	SendMessageW(hwndControl, EM_SETSEL, OldTextLength, Cast(LPARAM, OldTextLength))
+	SendMessageW(hwndControl, EM_REPLACESEL, FALSE, Cast(LPARAM, lpwszText))
+	Edit_ScrollCaret(hwndControl)
+
+End Sub
+
 Private Sub ChildProcess_OnRead( _
 		ByVal this As InputDialogParam Ptr, _
 		ByVal dwErrorCode As DWORD, _
@@ -82,6 +97,26 @@ Private Sub ChildProcess_OnRead( _
 		ClosePipeHandles(@this->Pipes)
 		Exit Sub
 	End If
+
+	Scope
+		Const NewLine = !"\r\n"
+
+		Dim buf As WString * (READ_BUFFER_CAPACITY + 1) = Any
+		Dim Length As Long = MultiByteToWideChar( _
+			CP_ACP, _
+			0, _
+			@this->ReadBuffer(0), _
+			dwNumberOfBytesTransfered, _
+			@buf, _
+			READ_BUFFER_CAPACITY _
+		)
+		buf[Length] = 0
+
+		lstrcatW(@buf, @WStr(NewLine))
+
+		Dim hwndControl As HWND = GetDlgItem(this->hWin, IDC_EDT_OUTPUT)
+		AppendLengthTextW(hwndControl, @buf, Length + Len(NewLine))
+	End Scope
 
 	ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
 	Dim resRead As BOOL = ReadFileEx( _
@@ -340,20 +375,28 @@ Private Sub IDOK_OnClick( _
 
 End Sub
 
-Private Sub IDC_BTN_START_OnClick( _
+Private Sub IDC_BTN_INPUT_OnClick( _
 		ByVal this As InputDialogParam Ptr, _
 		ByVal hWin As HWND _
 	)
 
-	Const BreakMain = Str(!"break main\r\n")
-	lstrcpyA(@this->WriteBuffer(0), @BreakMain)
+	Const NewLine = Str(!"\r\n")
+
+	Dim bufLength As Long = GetDlgItemTextA( _
+		hWin, _
+		IDC_EDT_INPUT, _
+		@this->WriteBuffer(0), _
+		WRITE_BUFFER_CAPACITY - Len(NewLine) - 1 _
+	)
+
+	lstrcpyA(@this->WriteBuffer(bufLength), @NewLine)
 
 	' Start reading child process
 	ZeroMemory(@this->OverlapWrite, SizeOf(OVERLAPPED))
 	Dim resWrite As BOOL = WriteFileEx( _
 		this->Pipes.hServerWritePipe, _
 		@this->WriteBuffer(0), _
-		Len(BreakMain), _
+		bufLength + Len(NewLine), _
 		@this->OverlapWrite, _
 		@WriteCompletionRoutine _
 	)
@@ -414,8 +457,8 @@ Private Function InputDataDialogProc( _
 				Case IDOK
 					IDOK_OnClick(pContext, hWin)
 
-				Case IDC_BTN_START
-					IDC_BTN_START_OnClick(pContext, hWin)
+				Case IDC_BTN_INPUT
+					IDC_BTN_INPUT_OnClick(pContext, hWin)
 
 				Case IDCANCEL
 					IDCANCEL_OnClick(pContext, hWin)
