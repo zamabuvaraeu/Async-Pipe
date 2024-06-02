@@ -4,8 +4,10 @@
 
 Const PIPE_NAME_R = __TEXT("\\.\pipe\Async-ReaderR")
 Const PIPE_NAME_W = __TEXT("\\.\pipe\Async-ReaderW")
-Const PROCESS_NAME = __TEXT("C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe")
-Const PROCESS_COMMAND_LINE = __TEXT("""C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe"" ""-showincludes"" ""D:\QuickTestBasicProgram\file.bas""")
+' Const PROCESS_NAME = __TEXT("C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe")
+' Const PROCESS_COMMAND_LINE = __TEXT("""C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe"" ""-showincludes"" ""D:\QuickTestBasicProgram\file.bas""")
+Const PROCESS_NAME = __TEXT("C:\Program Files\mingw64\bin\gdb.exe")
+Const PROCESS_COMMAND_LINE = __TEXT("""C:\Program Files\mingw64\bin\gdb.exe"" ""-f"" ""D:\QuickTestBasicProgram\file.exe""")
 
 Const READ_BUFFER_CAPACITY = 512
 Const WRITE_BUFFER_CAPACITY = 512
@@ -122,7 +124,7 @@ Private Sub WriteCompletionRoutine( _
 		ByVal lpOverlapped As OVERLAPPED Ptr _
 	)
 
-	Dim this As InputDialogParam Ptr = CONTAINING_RECORD(lpOverlapped, InputDialogParam, OverlapRead)
+	Dim this As InputDialogParam Ptr = CONTAINING_RECORD(lpOverlapped, InputDialogParam, OverlapWrite)
 	ChildProcess_OnWrite(this, dwErrorCode, dwNumberOfBytesTransfered)
 
 End Sub
@@ -322,20 +324,43 @@ Private Sub IDOK_OnClick( _
 		Exit Sub
 	End If
 
-	Scope
-		' Start reading child process
-		ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
-		Dim resRead As BOOL = ReadFileEx( _
-			this->Pipes.hServerReadPipe, _
-			@this->ReadBuffer(0), _
-			READ_BUFFER_CAPACITY, _
-			@this->OverlapRead, _
-			@ReadCompletionRoutine _
-		)
-		If resRead = 0 Then
-			' error
-		End If
-	End Scope
+	' Start reading child process
+	ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
+	Dim resRead As BOOL = ReadFileEx( _
+		this->Pipes.hServerReadPipe, _
+		@this->ReadBuffer(0), _
+		READ_BUFFER_CAPACITY, _
+		@this->OverlapRead, _
+		@ReadCompletionRoutine _
+	)
+	If resRead = 0 Then
+		' error
+		Exit Sub
+	End If
+
+End Sub
+
+Private Sub IDC_BTN_START_OnClick( _
+		ByVal this As InputDialogParam Ptr, _
+		ByVal hWin As HWND _
+	)
+
+	Const BreakMain = Str(!"break main\r\n")
+	lstrcpyA(@this->WriteBuffer(0), @BreakMain)
+
+	' Start reading child process
+	ZeroMemory(@this->OverlapWrite, SizeOf(OVERLAPPED))
+	Dim resWrite As BOOL = WriteFileEx( _
+		this->Pipes.hServerWritePipe, _
+		@this->WriteBuffer(0), _
+		Len(BreakMain), _
+		@this->OverlapWrite, _
+		@WriteCompletionRoutine _
+	)
+	If resWrite = 0 Then
+		' error
+		Exit Sub
+	End If
 
 End Sub
 
@@ -388,6 +413,9 @@ Private Function InputDataDialogProc( _
 
 				Case IDOK
 					IDOK_OnClick(pContext, hWin)
+
+				Case IDC_BTN_START
+					IDC_BTN_START_OnClick(pContext, hWin)
 
 				Case IDCANCEL
 					IDCANCEL_OnClick(pContext, hWin)
