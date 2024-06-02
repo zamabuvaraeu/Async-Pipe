@@ -138,6 +138,17 @@ Private Sub ChildProcess_OnWrite( _
 		ByVal dwNumberOfBytesTransfered As DWORD _
 	)
 
+	If dwErrorCode Then
+		' error
+		ClosePipeHandles(@this->Pipes)
+		Exit Sub
+	End If
+
+	If dwNumberOfBytesTransfered = 0 Then
+		' end of the stream
+		ClosePipeHandles(@this->Pipes)
+		Exit Sub
+	End If
 
 End Sub
 
@@ -349,15 +360,6 @@ Private Sub IDOK_OnClick( _
 		ByVal hWin As HWND _
 	)
 
-	Dim hrCreateProcess As HRESULT = CreateChildProcessWithAsyncPipes( _
-		@this->Pipes, _
-		@PROCESS_NAME, _
-		@PROCESS_COMMAND_LINE _
-	)
-	If FAILED(hrCreateProcess) Then
-		Exit Sub
-	End If
-
 	' Start reading child process
 	ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
 	Dim resRead As BOOL = ReadFileEx( _
@@ -420,12 +422,23 @@ Private Sub DialogMain_OnLoad( _
 		ByVal hWin As HWND _
 	)
 
+	Dim hrCreateProcess As HRESULT = CreateChildProcessWithAsyncPipes( _
+		@this->Pipes, _
+		@PROCESS_NAME, _
+		@PROCESS_COMMAND_LINE _
+	)
+	If FAILED(hrCreateProcess) Then
+		Exit Sub
+	End If
+
 End Sub
 
 Private Sub DialogMain_OnUnload( _
 		ByVal this As InputDialogParam Ptr, _
 		ByVal hWin As HWND _
 	)
+
+	ClosePipeHandles(@this->Pipes)
 
 End Sub
 
