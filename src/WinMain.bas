@@ -311,7 +311,8 @@ Private Function CreateChildProcessWithAsyncPipes( _
 		ZeroMemory(@siStartInfo, SizeOf(STARTUPINFO))
 		With siStartInfo
 			.cb = SizeOf(STARTUPINFO)
-			.dwFlags = STARTF_USESTDHANDLES
+			.dwFlags = STARTF_USESTDHANDLES Or STARTF_USESHOWWINDOW
+			.wShowWindow = SW_HIDE
 			.hStdInput = pipes->hClientReadFile
 			.hStdOutput = pipes->hClientWriteFile
 			.hStdError = pipes->hClientWriteFile
