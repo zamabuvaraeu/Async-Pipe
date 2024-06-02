@@ -8,26 +8,28 @@ Const PROCESS_NAME = __TEXT("C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc
 Const PROCESS_COMMAND_LINE = __TEXT("""C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe"" ""-showincludes"" ""D:\QuickTestBasicProgram\file.bas""")
 
 Const READ_BUFFER_CAPACITY = 512
+Const WRITE_BUFFER_CAPACITY = 512
+
+Type ProcessPipes
+	hServerReadPipe As HANDLE
+	hServerWritePipe As HANDLE
+	hClientReadPipe As HANDLE
+	hClientWritePipe As HANDLE
+	hClientErrorPipe As HANDLE
+	hClientReadFile As HANDLE
+	hClientWriteFile As HANDLE
+	hClientErrorFile As HANDLE
+	lpCommandLine As TCHAR Ptr
+End Type
 
 Type InputDialogParam
 	hInst As HINSTANCE
 	hWin As HWND
 	OverlapRead As OVERLAPPED
 	OverlapWrite As OVERLAPPED
-
-	hServerReadPipe As HANDLE
-	hServerWritePipe As HANDLE
-
-	hClientReadPipe As HANDLE
-	hClientWritePipe As HANDLE
-	hClientErrorPipe As HANDLE
-
-	hClientReadFile As HANDLE
-	hClientWriteFile As HANDLE
-	hClientErrorFile As HANDLE
-
+	Pipes As ProcessPipes
 	ReadBuffer(READ_BUFFER_CAPACITY - 1) As UByte
-	WriteBuffer(READ_BUFFER_CAPACITY - 1) As UByte
+	WriteBuffer(WRITE_BUFFER_CAPACITY - 1) As UByte
 End Type
 
 Declare Sub ReadCompletionRoutine( _
@@ -43,19 +45,21 @@ Declare Sub WriteCompletionRoutine( _
 )
 
 Private Sub ClosePipeHandles( _
-		ByVal this As InputDialogParam Ptr _
+		ByVal pipes As ProcessPipes Ptr _
 	)
 
-	CloseHandle(this->hServerReadPipe)
-	CloseHandle(this->hServerWritePipe)
+	CloseHandle(pipes->hServerReadPipe)
+	CloseHandle(pipes->hServerWritePipe)
 
-	CloseHandle(this->hClientReadPipe)
-	CloseHandle(this->hClientWritePipe)
-	CloseHandle(this->hClientErrorPipe)
+	CloseHandle(pipes->hClientReadPipe)
+	CloseHandle(pipes->hClientWritePipe)
+	CloseHandle(pipes->hClientErrorPipe)
 
-	CloseHandle(this->hClientReadFile)
-	CloseHandle(this->hClientWriteFile)
-	CloseHandle(this->hClientErrorFile)
+	CloseHandle(pipes->hClientReadFile)
+	CloseHandle(pipes->hClientWriteFile)
+	CloseHandle(pipes->hClientErrorFile)
+
+	Deallocate(pipes->lpCommandLine)
 
 End Sub
 
@@ -67,19 +71,19 @@ Private Sub ChildProcess_OnRead( _
 
 	If dwErrorCode Then
 		' error
-		ClosePipeHandles(this)
+		ClosePipeHandles(@this->Pipes)
 		Exit Sub
 	End If
 
 	If dwNumberOfBytesTransfered = 0 Then
 		' end of the stream
-		ClosePipeHandles(this)
+		ClosePipeHandles(@this->Pipes)
 		Exit Sub
 	End If
 
 	ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
 	Dim resRead As BOOL = ReadFileEx( _
-		this->hServerReadPipe, _
+		this->Pipes.hServerReadPipe, _
 		@this->ReadBuffer(0), _
 		READ_BUFFER_CAPACITY, _
 		@this->OverlapRead, _
@@ -87,7 +91,7 @@ Private Sub ChildProcess_OnRead( _
 	)
 	If resRead = 0 Then
 		' error
-		ClosePipeHandles(this)
+		ClosePipeHandles(@this->Pipes)
 	End If
 
 End Sub
@@ -123,15 +127,16 @@ Private Sub WriteCompletionRoutine( _
 
 End Sub
 
-Private Sub IDOK_OnClick( _
-		ByVal this As InputDialogParam Ptr, _
-		ByVal hWin As HWND _
-	)
+Private Function CreateChildProcessWithAsyncPipes( _
+		ByVal pipes As ProcessPipes Ptr, _
+		ByVal pApplicationName As TCHAR Ptr, _
+		ByVal pLine As TCHAR Ptr _
+	)As HRESULT
 
 	Scope
 		' Server-side handles need to be noninheritable
 
-		this->hServerReadPipe = CreateNamedPipe( _
+		pipes->hServerReadPipe = CreateNamedPipe( _
 			@PIPE_NAME_R, _
 			PIPE_ACCESS_DUPLEX Or FILE_FLAG_OVERLAPPED, _
 			PIPE_TYPE_BYTE Or PIPE_READMODE_BYTE, _
@@ -139,12 +144,12 @@ Private Sub IDOK_OnClick( _
 			0, 0, 0, _
 			NULL _
 		)
-		If this->hServerReadPipe = INVALID_HANDLE_VALUE Then
+		If pipes->hServerReadPipe = INVALID_HANDLE_VALUE Then
 			' error
-			Exit Sub
+			Return E_FAIL
 		End If
 
-		this->hServerWritePipe = CreateNamedPipe( _
+		pipes->hServerWritePipe = CreateNamedPipe( _
 			@PIPE_NAME_W, _
 			PIPE_ACCESS_DUPLEX Or FILE_FLAG_OVERLAPPED, _
 			PIPE_TYPE_BYTE Or PIPE_READMODE_BYTE, _
@@ -152,9 +157,9 @@ Private Sub IDOK_OnClick( _
 			0, 0, 0, _
 			NULL _
 		)
-		If this->hServerWritePipe = INVALID_HANDLE_VALUE Then
+		If pipes->hServerWritePipe = INVALID_HANDLE_VALUE Then
 			' error
-			Exit Sub
+			Return E_FAIL
 		End If
 	End Scope
 
@@ -168,7 +173,7 @@ Private Sub IDOK_OnClick( _
 			.bInheritHandle = TRUE
 		End With
 
-		this->hClientReadPipe = CreateFile( _
+		pipes->hClientReadPipe = CreateFile( _
 			@PIPE_NAME_W, _
 			GENERIC_READ, _
 			0, _
@@ -178,7 +183,7 @@ Private Sub IDOK_OnClick( _
 			NULL _
 		)
 
-		this->hClientWritePipe = CreateFile( _
+		pipes->hClientWritePipe = CreateFile( _
 			@PIPE_NAME_R, _
 			GENERIC_WRITE, _
 			0, _
@@ -188,7 +193,7 @@ Private Sub IDOK_OnClick( _
 			NULL _
 		)
 
-		this->hClientErrorPipe = CreateFile( _
+		pipes->hClientErrorPipe = CreateFile( _
 			@PIPE_NAME_R, _
 			GENERIC_WRITE, _
 			0, _
@@ -205,41 +210,44 @@ Private Sub IDOK_OnClick( _
 
 		Dim resDuplRead As BOOL = DuplicateHandle( _
 			hCurrentProcess, _
-			this->hClientReadPipe, _
+			pipes->hClientReadPipe, _
 			hCurrentProcess, _
-			@this->hClientReadFile, _
+			@pipes->hClientReadFile, _
 			0, _
 			TRUE, _
 			DUPLICATE_SAME_ACCESS _
 		)
 		If resDuplRead = 0 Then
 			' error
+			Return E_FAIL
 		End If
 
 		Dim resDuplWrite As BOOL = DuplicateHandle( _
 			hCurrentProcess, _
-			this->hClientWritePipe, _
+			pipes->hClientWritePipe, _
 			hCurrentProcess, _
-			@this->hClientWriteFile, _
+			@pipes->hClientWriteFile, _
 			0, _
 			TRUE, _
 			DUPLICATE_SAME_ACCESS _
 		)
 		If resDuplWrite = 0 Then
 			' error
+			Return E_FAIL
 		End If
 
 		Dim resDuplError As BOOL = DuplicateHandle( _
 			hCurrentProcess, _
-			this->hClientErrorPipe, _
+			pipes->hClientErrorPipe, _
 			hCurrentProcess, _
-			@this->hClientErrorFile, _
+			@pipes->hClientErrorFile, _
 			0, _
 			TRUE, _
 			DUPLICATE_SAME_ACCESS _
 		)
 		If resDuplError = 0 Then
 			' error
+			Return E_FAIL
 		End If
 	End Scope
 
@@ -257,24 +265,25 @@ Private Sub IDOK_OnClick( _
 		With siStartInfo
 			.cb = SizeOf(STARTUPINFO)
 			.dwFlags = STARTF_USESTDHANDLES
-			.hStdInput = this->hClientReadFile
-			.hStdOutput = this->hClientWriteFile
-			.hStdError = this->hClientWriteFile
+			.hStdInput = pipes->hClientReadFile
+			.hStdOutput = pipes->hClientWriteFile
+			.hStdError = pipes->hClientWriteFile
 		End With
 
 		Dim piProcInfo As PROCESS_INFORMATION = Any
 
-		Dim lpCommandLine As TCHAR Ptr = Allocate((Len(PROCESS_COMMAND_LINE) + 1) * SizeOf(TCHAR))
-		If lpCommandLine = NULL Then
+		Dim LineLength As Long = lstrlen(pLine)
+		pipes->lpCommandLine = Allocate((LineLength + 1) * SizeOf(TCHAR))
+		If pipes->lpCommandLine = NULL Then
 			' Out of memory
-			Exit Sub
+			Return E_FAIL
 		End If
 
-		lstrcpy(lpCommandLine, @PROCESS_COMMAND_LINE)
+		lstrcpy(pipes->lpCommandLine, pLine)
 
 		Dim resCreateProcess As BOOL = CreateProcess( _
-			@PROCESS_NAME, _
-			lpCommandLine, _
+			pApplicationName, _
+			pipes->lpCommandLine, _
 			NULL, _
 			NULL, _
 			True, _
@@ -287,7 +296,7 @@ Private Sub IDOK_OnClick( _
 
 		If resCreateProcess = 0 Then
 			' error
-			Exit Sub
+			Return E_FAIL
 		End If
 
 		CloseHandle(piProcInfo.hProcess)
@@ -295,11 +304,29 @@ Private Sub IDOK_OnClick( _
 
 	End Scope
 
+	Return S_OK
+
+End Function
+
+Private Sub IDOK_OnClick( _
+		ByVal this As InputDialogParam Ptr, _
+		ByVal hWin As HWND _
+	)
+
+	Dim hrCreateProcess As HRESULT = CreateChildProcessWithAsyncPipes( _
+		@this->Pipes, _
+		@PROCESS_NAME, _
+		@PROCESS_COMMAND_LINE _
+	)
+	If FAILED(hrCreateProcess) Then
+		Exit Sub
+	End If
+
 	Scope
 		' Start reading child process
 		ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
 		Dim resRead As BOOL = ReadFileEx( _
-			this->hServerReadPipe, _
+			this->Pipes.hServerReadPipe, _
 			@this->ReadBuffer(0), _
 			READ_BUFFER_CAPACITY, _
 			@this->OverlapRead, _
@@ -308,7 +335,6 @@ Private Sub IDOK_OnClick( _
 		If resRead = 0 Then
 			' error
 		End If
-
 	End Scope
 
 End Sub
