@@ -14,41 +14,72 @@ Type InputDialogParam
 	hWin As HWND
 	OverlapRead As OVERLAPPED
 	OverlapWrite As OVERLAPPED
-	hReadPipe As HANDLE
-	hWritePipe As HANDLE
 
-	hClientWritePipe As HANDLE
+	hServerReadPipe As HANDLE
+	hServerWritePipe As HANDLE
+
 	hClientReadPipe As HANDLE
+	hClientWritePipe As HANDLE
+	hClientErrorPipe As HANDLE
 
+	hClientReadFile As HANDLE
 	hClientWriteFile As HANDLE
 	hClientErrorFile As HANDLE
-	hClientReadFile As HANDLE
 
 	ReadBuffer(READ_BUFFER_CAPACITY - 1) As UByte
 	WriteBuffer(READ_BUFFER_CAPACITY - 1) As UByte
 End Type
 
-Private Sub ReadCompletionRoutine( _
+Declare Sub ReadCompletionRoutine( _
+	ByVal dwErrorCode As DWORD, _
+	ByVal dwNumberOfBytesTransfered As DWORD, _
+	ByVal lpOverlapped As OVERLAPPED Ptr _
+)
+
+Declare Sub WriteCompletionRoutine( _
+	ByVal dwErrorCode As DWORD, _
+	ByVal dwNumberOfBytesTransfered As DWORD, _
+	ByVal lpOverlapped As OVERLAPPED Ptr _
+)
+
+Private Sub ClosePipeHandles( _
+		ByVal this As InputDialogParam Ptr _
+	)
+
+	CloseHandle(this->hServerReadPipe)
+	CloseHandle(this->hServerWritePipe)
+
+	CloseHandle(this->hClientReadPipe)
+	CloseHandle(this->hClientWritePipe)
+	CloseHandle(this->hClientErrorPipe)
+
+	CloseHandle(this->hClientReadFile)
+	CloseHandle(this->hClientWriteFile)
+	CloseHandle(this->hClientErrorFile)
+
+End Sub
+
+Private Sub ChildProcess_OnRead( _
+		ByVal this As InputDialogParam Ptr, _
 		ByVal dwErrorCode As DWORD, _
-		ByVal dwNumberOfBytesTransfered As DWORD, _
-		ByVal lpOverlapped As OVERLAPPED Ptr _
+		ByVal dwNumberOfBytesTransfered As DWORD _
 	)
 
 	If dwErrorCode Then
 		' error
+		ClosePipeHandles(this)
 		Exit Sub
 	End If
 
 	If dwNumberOfBytesTransfered = 0 Then
 		' end of the stream
+		ClosePipeHandles(this)
 		Exit Sub
 	End If
 
-	Dim this As InputDialogParam Ptr = CONTAINING_RECORD(lpOverlapped, InputDialogParam, OverlapRead)
-
 	ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
 	Dim resRead As BOOL = ReadFileEx( _
-		this->hReadPipe, _
+		this->hServerReadPipe, _
 		@this->ReadBuffer(0), _
 		READ_BUFFER_CAPACITY, _
 		@this->OverlapRead, _
@@ -56,7 +87,28 @@ Private Sub ReadCompletionRoutine( _
 	)
 	If resRead = 0 Then
 		' error
+		ClosePipeHandles(this)
 	End If
+
+End Sub
+
+Private Sub ChildProcess_OnWrite( _
+		ByVal this As InputDialogParam Ptr, _
+		ByVal dwErrorCode As DWORD, _
+		ByVal dwNumberOfBytesTransfered As DWORD _
+	)
+
+
+End Sub
+
+Private Sub ReadCompletionRoutine( _
+		ByVal dwErrorCode As DWORD, _
+		ByVal dwNumberOfBytesTransfered As DWORD, _
+		ByVal lpOverlapped As OVERLAPPED Ptr _
+	)
+
+	Dim this As InputDialogParam Ptr = CONTAINING_RECORD(lpOverlapped, InputDialogParam, OverlapRead)
+	ChildProcess_OnRead(this, dwErrorCode, dwNumberOfBytesTransfered)
 
 End Sub
 
@@ -66,6 +118,9 @@ Private Sub WriteCompletionRoutine( _
 		ByVal lpOverlapped As OVERLAPPED Ptr _
 	)
 
+	Dim this As InputDialogParam Ptr = CONTAINING_RECORD(lpOverlapped, InputDialogParam, OverlapRead)
+	ChildProcess_OnWrite(this, dwErrorCode, dwNumberOfBytesTransfered)
+
 End Sub
 
 Private Sub IDOK_OnClick( _
@@ -74,7 +129,9 @@ Private Sub IDOK_OnClick( _
 	)
 
 	Scope
-		this->hReadPipe = CreateNamedPipe( _
+		' Server-side handles need to be noninheritable
+
+		this->hServerReadPipe = CreateNamedPipe( _
 			@PIPE_NAME_R, _
 			PIPE_ACCESS_DUPLEX Or FILE_FLAG_OVERLAPPED, _
 			PIPE_TYPE_BYTE Or PIPE_READMODE_BYTE, _
@@ -82,12 +139,12 @@ Private Sub IDOK_OnClick( _
 			0, 0, 0, _
 			NULL _
 		)
-		If this->hReadPipe = INVALID_HANDLE_VALUE Then
+		If this->hServerReadPipe = INVALID_HANDLE_VALUE Then
 			' error
 			Exit Sub
 		End If
 
-		this->hWritePipe = CreateNamedPipe( _
+		this->hServerWritePipe = CreateNamedPipe( _
 			@PIPE_NAME_W, _
 			PIPE_ACCESS_DUPLEX Or FILE_FLAG_OVERLAPPED, _
 			PIPE_TYPE_BYTE Or PIPE_READMODE_BYTE, _
@@ -95,20 +152,31 @@ Private Sub IDOK_OnClick( _
 			0, 0, 0, _
 			NULL _
 		)
-		If this->hWritePipe = INVALID_HANDLE_VALUE Then
+		If this->hServerWritePipe = INVALID_HANDLE_VALUE Then
 			' error
 			Exit Sub
 		End If
 	End Scope
 
 	Scope
-		' you need this for the client to inherit the handles
+		' Client-side handles need to be inheritable
+
 		Dim saAttr As SECURITY_ATTRIBUTES = Any
 		With saAttr
 			.nLength = SizeOf(SECURITY_ATTRIBUTES)
 			.lpSecurityDescriptor = NULL
 			.bInheritHandle = TRUE
 		End With
+
+		this->hClientReadPipe = CreateFile( _
+			@PIPE_NAME_W, _
+			GENERIC_READ, _
+			0, _
+			@saAttr, _
+			OPEN_EXISTING, _
+			0, _
+			NULL _
+		)
 
 		this->hClientWritePipe = CreateFile( _
 			@PIPE_NAME_R, _
@@ -120,15 +188,16 @@ Private Sub IDOK_OnClick( _
 			NULL _
 		)
 
-		this->hClientReadPipe = CreateFile( _
-			@PIPE_NAME_W, _
-			GENERIC_READ, _
+		this->hClientErrorPipe = CreateFile( _
+			@PIPE_NAME_R, _
+			GENERIC_WRITE, _
 			0, _
 			@saAttr, _
 			OPEN_EXISTING, _
 			0, _
 			NULL _
 		)
+
 	End Scope
 
 	Scope
@@ -162,7 +231,7 @@ Private Sub IDOK_OnClick( _
 
 		Dim resDuplError As BOOL = DuplicateHandle( _
 			hCurrentProcess, _
-			this->hClientWritePipe, _
+			this->hClientErrorPipe, _
 			hCurrentProcess, _
 			@this->hClientErrorFile, _
 			0, _
@@ -187,15 +256,20 @@ Private Sub IDOK_OnClick( _
 		ZeroMemory(@siStartInfo, SizeOf(STARTUPINFO))
 		With siStartInfo
 			.cb = SizeOf(STARTUPINFO)
+			.dwFlags = STARTF_USESTDHANDLES
 			.hStdInput = this->hClientReadFile
 			.hStdOutput = this->hClientWriteFile
 			.hStdError = this->hClientWriteFile
-			.dwFlags = STARTF_USESTDHANDLES
 		End With
 
 		Dim piProcInfo As PROCESS_INFORMATION = Any
 
 		Dim lpCommandLine As TCHAR Ptr = Allocate((Len(PROCESS_COMMAND_LINE) + 1) * SizeOf(TCHAR))
+		If lpCommandLine = NULL Then
+			' Out of memory
+			Exit Sub
+		End If
+
 		lstrcpy(lpCommandLine, @PROCESS_COMMAND_LINE)
 
 		Dim resCreateProcess As BOOL = CreateProcess( _
@@ -213,11 +287,19 @@ Private Sub IDOK_OnClick( _
 
 		If resCreateProcess = 0 Then
 			' error
+			Exit Sub
 		End If
 
+		CloseHandle(piProcInfo.hProcess)
+		CloseHandle(piProcInfo.hThread)
+
+	End Scope
+
+	Scope
+		' Start reading child process
 		ZeroMemory(@this->OverlapRead, SizeOf(OVERLAPPED))
 		Dim resRead As BOOL = ReadFileEx( _
-			this->hReadPipe, _
+			this->hServerReadPipe, _
 			@this->ReadBuffer(0), _
 			READ_BUFFER_CAPACITY, _
 			@this->OverlapRead, _
