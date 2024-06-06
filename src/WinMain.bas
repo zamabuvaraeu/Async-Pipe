@@ -218,6 +218,12 @@ Private Sub DialogMain_OnLoad( _
 		Exit Sub
 	End If
 
+	Dim hwndOK As HWND = GetDlgItem(hWin, IDOK)
+	EnableWindow(hwndOK, True)
+
+	Dim hwndInput As HWND = GetDlgItem(hWin, IDC_BTN_INPUT)
+	EnableWindow(hwndInput, True)
+
 End Sub
 
 Private Sub DialogMain_OnUnload( _
