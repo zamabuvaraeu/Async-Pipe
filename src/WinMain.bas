@@ -4,8 +4,6 @@
 #include once "Resources.RH"
 #include once "ServerPipes.bi"
 
-' Const PROCESS_NAME = __TEXT("C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe")
-' Const PROCESS_COMMAND_LINE = __TEXT("""C:\Program Files (x86)\FreeBASIC-1.10.1-winlibs-gcc-9.3.0\fbc64.exe"" ""-showincludes"" ""D:\QuickTestBasicProgram\file.bas""")
 Const PROCESS_NAME = __TEXT("C:\Program Files\mingw64\bin\gdb.exe")
 Const PROCESS_COMMAND_LINE = __TEXT("""C:\Program Files\mingw64\bin\gdb.exe"" ""-f"" ""D:\QuickTestBasicProgram\file.exe""")
 
