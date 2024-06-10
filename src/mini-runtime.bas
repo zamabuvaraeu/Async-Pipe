@@ -1,11 +1,23 @@
-#include once "mini-runtime.bi"
-#include once "windows.bi"
-
 #ifdef WITHOUT_RUNTIME
 
-#undef fb_End
+#include once "mini-runtime.bi"
 
-Declare Function main Alias "main"(ByVal argc As Long, ByVal argv As ZString Ptr) As Long
+#ifdef __FB_WIN32__
+#include once "windows.bi"
+#endif
+
+#undef fb_End
+#undef fb_Init
+
+Declare Function main Alias "main"(ByVal argc As Long, ByVal argv As ZString Ptr Ptr) As Long
+
+Public Sub __main cdecl Alias "__main"()
+
+End Sub
+
+Public Sub fb_Init Alias "fb_Init"(ByVal argc As Long, ByVal argv As ZString Ptr Ptr, ByVal lang As Long)
+
+End Sub
 
 Public Sub fb_End Alias "fb_End"(ByVal RetCode As Long)
 	#ifdef __FB_WIN32__
