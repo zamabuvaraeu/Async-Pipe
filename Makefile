@@ -12,7 +12,6 @@ DLL_TOOL ?= dlltool.exe
 LIB_DIR ?=
 INC_DIR ?=
 LD_SCRIPT ?=
-FLTO ?=
 
 TARGET_TRIPLET ?=
 MARCH ?= native
@@ -96,8 +95,8 @@ release: CFLAGS+=$(CFLAGS_RELEASE)
 release: CFLAGS+=-fno-math-errno -fno-exceptions
 release: CFLAGS+=-fno-unwind-tables -fno-asynchronous-unwind-tables
 release: CFLAGS+=-O3 -fno-ident -fdata-sections -ffunction-sections
-ifneq ($(FLTO),)
-release: CFLAGS+=$(FLTO)
+ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
+release: CFLAGS+=-flto
 endif
 debug: CFLAGS+=$(CFLAGS_DEBUG)
 
@@ -119,24 +118,28 @@ debug: GORCFLAGS+=$(GORCFLAGS_DEBUG)
 
 ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
 ifeq ($(USE_RUNTIME),FALSE)
-LDFLAGS+=-e EntryPoint
+LDFLAGS+=-Wl,-e EntryPoint
 endif
-LDFLAGS+=-m i386pep
 else
 ifeq ($(USE_RUNTIME),FALSE)
-LDFLAGS+=-e _EntryPoint@0
+LDFLAGS+=-Wl,-e _EntryPoint@0
 endif
-LDFLAGS+=-m i386pe
-LDFLAGS+=--large-address-aware
+LDFLAGS+=-Wl,--large-address-aware
 endif
-LDFLAGS+=-subsystem windows
-LDFLAGS+=--no-seh --nxcompat
+LDFLAGS+=-Wl,--subsystem windows
+LDFLAGS+=-Wl,--no-seh -Wl,--nxcompat
+LDFLAGS+=-Wl,--disable-dynamicbase
+LDFLAGS+=-pipe -nostdlib
 LDFLAGS+=-L .
 LDFLAGS+=-L "$(LIB_DIR)"
 ifneq ($(LD_SCRIPT),)
 LDFLAGS+=-T "$(LD_SCRIPT)"
 endif
-release: LDFLAGS+=-s --gc-sections
+ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
+release: LDFLAGS+=-flto -s -Wl,--gc-sections
+else
+release: LDFLAGS+=-s -Wl,--gc-sections
+endif
 debug: LDFLAGS+=$(LDFLAGS_DEBUG)
 debug: LDLIBS+=$(LDLIBS_DEBUG)
 
@@ -145,7 +148,7 @@ LDLIBSBEGIN+="$(LIB_DIR)\crt2.o"
 LDLIBSBEGIN+="$(LIB_DIR)\crtbegin.o"
 LDLIBSBEGIN+="$(LIB_DIR)\fbrt0.o"
 endif
-LDLIBS+=--start-group
+LDLIBS+=-Wl,--start-group
 LDLIBS+=-ladvapi32 -lcomctl32 -lcomdlg32 -lcrypt32
 LDLIBS+=-lgdi32 -lgdiplus -lkernel32 -lmswsock
 LDLIBS+=-lole32 -loleaut32 -lshell32 -lshlwapi
@@ -159,7 +162,7 @@ LDLIBS_DEBUG+=-lgcc -lmingw32 -lmingwex -lmoldname -lgcc_eh
 ifeq ($(USE_RUNTIME),TRUE)
 LDLIBS+=-lgcc -lmingw32 -lmingwex -lmoldname -lgcc_eh
 endif
-LDLIBS+=--end-group
+LDLIBS+=-Wl,--end-group
 ifeq ($(USE_RUNTIME),TRUE)
 LDLIBSEND+="$(LIB_DIR)\crtend.o"
 endif
@@ -212,10 +215,10 @@ createdirs:
 	$(MKDIR_COMMAND) $(OBJ_RELEASE_DIR_MOVE)
 
 $(BIN_RELEASE_DIR)$(PATH_SEP)$(OUTPUT_FILE_NAME): $(OBJECTFILES_RELEASE)
-	$(LD) $(LDFLAGS) $(LDLIBSBEGIN) $^ $(LDLIBS) $(LDLIBSEND) -o $@
+	$(CC) $(LDFLAGS) $(LDLIBSBEGIN) $^ $(LDLIBS) $(LDLIBSEND) -o $@
 
 $(BIN_DEBUG_DIR)$(PATH_SEP)$(OUTPUT_FILE_NAME): $(OBJECTFILES_DEBUG)
-	$(LD) $(LDFLAGS) $(LDLIBSBEGIN) $^ $(LDLIBS) $(LDLIBSEND) -o $@
+	$(CC) $(LDFLAGS) $(LDLIBSBEGIN) $^ $(LDLIBS) $(LDLIBSEND) -o $@
 
 $(OBJ_RELEASE_DIR)$(PATH_SEP)%$(FILE_SUFFIX).o: $(OBJ_RELEASE_DIR)$(PATH_SEP)%$(FILE_SUFFIX).asm
 	$(AS) $(ASFLAGS) -o $@ $<
