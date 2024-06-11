@@ -95,9 +95,7 @@ release: CFLAGS+=$(CFLAGS_RELEASE)
 release: CFLAGS+=-fno-math-errno -fno-exceptions
 release: CFLAGS+=-fno-unwind-tables -fno-asynchronous-unwind-tables
 release: CFLAGS+=-O3 -fno-ident -fdata-sections -ffunction-sections
-ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
 release: CFLAGS+=-flto
-endif
 debug: CFLAGS+=$(CFLAGS_DEBUG)
 
 ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
@@ -135,11 +133,7 @@ LDFLAGS+=-L "$(LIB_DIR)"
 ifneq ($(LD_SCRIPT),)
 LDFLAGS+=-T "$(LD_SCRIPT)"
 endif
-ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
 release: LDFLAGS+=-flto -s -Wl,--gc-sections
-else
-release: LDFLAGS+=-s -Wl,--gc-sections
-endif
 debug: LDFLAGS+=$(LDFLAGS_DEBUG)
 debug: LDLIBS+=$(LDLIBS_DEBUG)
 
